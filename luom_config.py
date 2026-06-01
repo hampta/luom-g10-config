@@ -22,6 +22,7 @@ def save_state(
     polling_rate=None,
     lift_off=None,
     light_mode=None,
+    standard_color=None,
 ):
     os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
     with open(STATE_FILE, "w") as f:
@@ -35,6 +36,7 @@ def save_state(
                 "polling_rate": polling_rate,  # 125/250/500/1000 (None = 1000)
                 "lift_off": lift_off,  # 1/2/3 (None = 2)
                 "light_mode": light_mode,  # mode name string (None = "standard")
+                "standard_color": standard_color,  # None = firmware default ctrl#6
             },
             f,
             indent=2,
@@ -64,6 +66,7 @@ def print_state():
     poll = state.get("polling_rate") or 1000
     lod = state.get("lift_off") or 2
     lm = state.get("light_mode") or "standard"
+    sc = state.get("standard_color")
     print(f"Active DPI slot : {active_idx + 1}  (index {active_idx})")
     print(f"Enabled slots   : {n_slots} of 7")
     print(f"CPI per slot    : {cpi}")
@@ -73,7 +76,7 @@ def print_state():
     )
     print(f"Polling rate    : {poll} Hz")
     print(f"Lift-off dist   : LOD {lod}  (1=low, 3=high)")
-    print(f"Light mode      : {lm}")
+    print(f"Light mode      : {lm}" + (f"  (color: {sc})" if sc else ""))
     print(f"Swap L/R        : {swap}")
 
 
@@ -132,6 +135,7 @@ class LUOMMouse:
         polling_rate=None,
         lift_off=None,
         light_mode=None,
+        standard_color=None,
     ):
         print("Applying configuration...")
         # Resolve the CPI list we're actually writing, for state persistence
@@ -212,9 +216,32 @@ class LUOMMouse:
             # "mode13": ("272b85049842556e", "272d9dff383567f6"),  # S13 (unidentified)
             # "mode14": ("272b85049842556e", "272b65fff0357676"),  # S14 (unidentified)
         }
+
+        # Standard mode color variants (from luom g10-light-2.pcapng analysis).
+        # ctrl#5 is identical for all variants; only ctrl#6 b2/b6 changes.
+        # Checksum invariant: (b2 + b6) & 0xFF == 0xE2 for all standard-color variants.
+        # b2=0x75 → multicolor (rainbow palette from F0/F1 EP3 packets)
+        # b2=0x65 → single white (FF FF FF from F0 slot 8)
+        # Other colors (red/green/etc.) not yet captured — b2 values unknown.
+        STANDARD_COLOR_CTRL6 = {
+            "multicolor": "272b75ffe8356d6e",  # b2=0x75 b6=0x6D  (verified pcap S1)
+            "white": "272b65ffe8357d6e",  # b2=0x65 b6=0x7D  (verified pcap S2)
+        }
+
         ctrl5_pkt, ctrl6_pkt = LIGHT_MODES.get(
             light_mode or "standard", LIGHT_MODES["standard"]
         )
+        # Override ctrl#6 for standard mode if --standard-color is given
+        if (
+            light_mode is None or light_mode == "standard"
+        ) and standard_color is not None:
+            if standard_color in STANDARD_COLOR_CTRL6:
+                ctrl6_pkt = STANDARD_COLOR_CTRL6[standard_color]
+                print(f"  standard-color: {standard_color} → ctrl#6 = {ctrl6_pkt}")
+            else:
+                print(
+                    f"  Warning: unknown standard-color '{standard_color}', using default ctrl#6"
+                )
         self.ctrl(ctrl5_pkt)
         self.ctrl(ctrl6_pkt)
         self.ctrl("272a8dfff05d7636")
@@ -317,6 +344,7 @@ class LUOMMouse:
             polling_rate,
             lift_off,
             light_mode,
+            standard_color,
         )
 
 
@@ -384,14 +412,26 @@ if __name__ == "__main__":
         "yo-yo",
         "marbles",
         "flying-star",
-        "mode13",
-        "mode14",
+        # "mode13",
+        # "mode14",
     ]
     parser.add_argument(
         "--light-mode",
         metavar="MODE",
         choices=LIGHT_MODE_CHOICES,
         help=("Light effect: " + ", ".join(LIGHT_MODE_CHOICES)),
+    )
+    parser.add_argument(
+        "--standard-color",
+        metavar="COLOR",
+        choices=["multicolor", "white"],
+        default=None,
+        help=(
+            "Color variant for --light-mode standard. "
+            "multicolor = rainbow palette (default firmware behavior), "
+            "white = single white LED. "
+            "[EXPERIMENTAL: from pcap luom g10-light-2.pcapng, only these 2 variants verified]"
+        ),
     )
     parser.add_argument(
         "--dpi-count",
@@ -409,6 +449,15 @@ if __name__ == "__main__":
     if len(sys.argv) <= 1:
         parser.print_help()
         sys.exit(1)
+
+    # Restore standard_color from saved state if not specified on CLI.
+    # Prevents subsequent calls (e.g. --active-dpi only) from resetting
+    # the lighting variant back to the firmware default.
+    effective_standard_color = args.standard_color
+    if effective_standard_color is None:
+        saved = load_state()
+        if saved is not None:
+            effective_standard_color = saved.get("standard_color")
 
     mouse = LUOMMouse()
     try:
@@ -428,6 +477,7 @@ if __name__ == "__main__":
             polling_rate=args.polling_rate,
             lift_off=args.lift_off,
             light_mode=args.light_mode,
+            standard_color=effective_standard_color,
         )
         print("Configuration applied successfully.")
     finally:
