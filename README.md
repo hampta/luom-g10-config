@@ -14,12 +14,12 @@ Protocol fully decoded from USBPcap captures. No Windows driver or proprietary s
 - [x] Lift-off distance (3 levels)
 - [x] Key debounce (1–10 / 20 / 100 ms)
 - [x] Light modes (12 effects)
-- [x] Standard color variant (`multicolor` / `white`) — *experimental, 2 variants from pcap*
+- [x] Standard color variant (`multicolor`, `white`, `red`, `green`, `blue`)
+- [x] RGB solid color customization (`--color RRGGBB`) via multicolor palette hack
 - [x] Button swap (L↔R)
 - [x] Config persistence (`~/.config/luom_g10.json`)
 - [x] Factory defaults (`--default`)
 - [ ] `mode13`, `mode14` — captured from pcap, effect unidentified
-- [ ] RGB color per-slot customization — palette hardcoded
 - [ ] Custom button remapping
 - [ ] Windows / macOS support
 - [ ] Firmware read-back
@@ -159,6 +159,21 @@ sudo python3 luom_config.py \
 sudo python3 luom_config.py --force-dpi 1600
 ```
 
+### Set static LED color and adjust brightness
+
+The mouse firmware only has fixed preset colors. To achieve an arbitrary static RGB color, this tool uses a clever hack: it sets the mouse to "multicolor" (rainbow) mode, but fills the entire 9-slot rainbow palette with your chosen color.
+
+```bash
+# Bright Orange
+sudo python3 luom_config.py --color FF6600
+
+# Dim Orange (brightness is controlled by the RGB hex value itself!)
+sudo python3 luom_config.py --color 401A00
+
+# Built-in firmware red
+sudo python3 luom_config.py --standard-color red
+```
+
 ### Swap left/right mouse buttons
 
 ```bash
@@ -181,6 +196,8 @@ sudo python3 luom_config.py --swap-lr
 | `--lift-off` | int | 1, 2, 3 | 2 | Lift-off distance (1 = low, 3 = high) |
 | `--key-response` | int | 1–10, 20, 100 | 100 | Button debounce time in ms |
 | `--light-mode` | str | see below | `standard` | LED lighting effect |
+| `--standard-color` | str | `multicolor`, `white`, `red`, `green`, `blue` | `multicolor` | Use a built-in firmware color preset for standard mode |
+| `--color` | hex | `RRGGBB` (e.g., `FF0000`) | — | Set a custom static RGB color (and adjust brightness) using the multicolor hack |
 | `--swap-lr` | flag | — | off | Swap left and right buttons |
 
 ### Light modes

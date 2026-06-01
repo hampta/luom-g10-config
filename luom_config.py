@@ -23,6 +23,7 @@ def save_state(
     lift_off=None,
     light_mode=None,
     standard_color=None,
+    custom_color=None,
 ):
     os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
     with open(STATE_FILE, "w") as f:
@@ -36,7 +37,8 @@ def save_state(
                 "polling_rate": polling_rate,  # 125/250/500/1000 (None = 1000)
                 "lift_off": lift_off,  # 1/2/3 (None = 2)
                 "light_mode": light_mode,  # mode name string (None = "standard")
-                "standard_color": standard_color,  # None = firmware default ctrl#6
+                "standard_color": standard_color,  # "multicolor" | "white" | etc
+                "custom_color": custom_color,  # hex string RRGGBB or None
             },
             f,
             indent=2,
@@ -67,6 +69,7 @@ def print_state():
     lod = state.get("lift_off") or 2
     lm = state.get("light_mode") or "standard"
     sc = state.get("standard_color")
+    cc = state.get("custom_color")
     print(f"Active DPI slot : {active_idx + 1}  (index {active_idx})")
     print(f"Enabled slots   : {n_slots} of 7")
     print(f"CPI per slot    : {cpi}")
@@ -76,7 +79,12 @@ def print_state():
     )
     print(f"Polling rate    : {poll} Hz")
     print(f"Lift-off dist   : LOD {lod}  (1=low, 3=high)")
-    print(f"Light mode      : {lm}" + (f"  (color: {sc})" if sc else ""))
+    light_str = lm
+    if cc:
+        light_str += f"  (custom color: #{cc})"
+    elif sc:
+        light_str += f"  (color: {sc})"
+    print(f"Light mode      : {light_str}")
     print(f"Swap L/R        : {swap}")
 
 
@@ -136,6 +144,7 @@ class LUOMMouse:
         lift_off=None,
         light_mode=None,
         standard_color=None,
+        custom_color=None,
     ):
         print("Applying configuration...")
         # Resolve the CPI list we're actually writing, for state persistence
@@ -217,43 +226,74 @@ class LUOMMouse:
             # "mode14": ("272b85049842556e", "272b65fff0357676"),  # S14 (unidentified)
         }
 
-        # Standard mode color variants (from luom g10-light-2.pcapng analysis).
-        # ctrl#5 is identical for all variants; only ctrl#6 b2/b6 changes.
-        # Checksum invariant: (b2 + b6) & 0xFF == 0xE2 for all standard-color variants.
-        # b2=0x75 → multicolor (rainbow palette from F0/F1 EP3 packets)
-        # b2=0x65 → single white (FF FF FF from F0 slot 8)
-        # Other colors (red/green/etc.) not yet captured — b2 values unknown.
+        # Standard mode color variants (verified from luom g10-light-2.pcapng).
+        # For single-color: ctrl#6 = 272b65ffe8357d6e (b2=0x65) is FIXED for all colors.
+        # ctrl#5 encodes the actual color (see SINGLE_COLOR table below).
         STANDARD_COLOR_CTRL6 = {
-            "multicolor": "272b75ffe8356d6e",  # b2=0x75 b6=0x6D  (verified pcap S1)
-            "white": "272b65ffe8357d6e",  # b2=0x65 b6=0x7D  (verified pcap S2)
+            "multicolor": "272b75ffe8356d6e",  # b2=0x75 b6=0x6D (rainbow palette)
+            "rainbow":    "272b75ffe8356d6e",  # alias
         }
 
         ctrl5_pkt, ctrl6_pkt = LIGHT_MODES.get(
             light_mode or "standard", LIGHT_MODES["standard"]
         )
-        # Override ctrl#6 for standard mode if --standard-color is given
-        if (
-            light_mode is None or light_mode == "standard"
-        ) and standard_color is not None:
-            if standard_color in STANDARD_COLOR_CTRL6:
-                ctrl6_pkt = STANDARD_COLOR_CTRL6[standard_color]
-                print(f"  standard-color: {standard_color} → ctrl#6 = {ctrl6_pkt}")
-            else:
-                print(
-                    f"  Warning: unknown standard-color '{standard_color}', using default ctrl#6"
-                )
+        # Standard mode color selection.
+        # PROTOCOL (verified from luom g10-colors.pcapng):
+        #   - ctrl#5 encodes the color (different per color)
+        #   - ctrl#6 = 272b65ffe8357d6e (fixed for ALL single-color modes)
+        #   - multicolor/rainbow = standard ctrl#5 + ctrl#6 b2=0x75
+        #
+        # Single-color ctrl#5 lookup (from pcap captures):
+        SINGLE_COLOR = {
+            # color: ctrl#5 packet
+            "white":   "272b85049842556e",  # standard ctrl#5 (verified: white/default)
+            "red":     "272d4d04a03c6f8e",  # pcap session 1 (~red)
+            "green":   "272bc5ff703d8596",  # pcap session 2 (~green)
+            "blue":    "27293dffe843b67e",  # pcap session 3 (~blue)
+            # cyan / magenta / yellow / gray: need pcap captures
+        }
+        SINGLE_COLOR_CTRL6 = "272b65ffe8357d6e"  # b2=0x65, fixed for all single colors
+
+        if light_mode is None or light_mode == "standard":
+            if custom_color is not None:
+                # HACK: to achieve arbitrary RGB, we use multicolor mode
+                # and fill the entire rainbow palette with the same color.
+                ctrl5_pkt = LIGHT_MODES["standard"][0]
+                ctrl6_pkt = STANDARD_COLOR_CTRL6["multicolor"]
+                print(f"  custom-color: RGB {custom_color} → using multicolor palette hack")
+            elif standard_color is not None:
+                sc_norm = standard_color.lower()
+                if sc_norm in ("multicolor", "rainbow"):
+                    pass  # already set correctly from LIGHT_MODES
+                elif sc_norm in SINGLE_COLOR:
+                    ctrl5_pkt = SINGLE_COLOR[sc_norm]
+                    ctrl6_pkt = SINGLE_COLOR_CTRL6
+                    print(f"  standard-color: {sc_norm} → ctrl#5={ctrl5_pkt}  ctrl#6={ctrl6_pkt}")
+                else:
+                    print(
+                        f"  Warning: unknown standard-color '{standard_color}', using default"
+                    )
         self.ctrl(ctrl5_pkt)
         self.ctrl(ctrl6_pkt)
         self.ctrl("272a8dfff05d7636")
 
-        # Packet 1: RGB color slot 1
+        # Packet 1: RGB color slot 1 (rainbow cycle palette, 9 × RGB)
+        # Only used in multicolor mode. Device ignores this in single-color mode.
         p1 = bytearray(
             bytes.fromhex(
                 "ff000000ff000000ffffff00ff00ff00ffffff8000ffffff0000000000000000"
             )
         )
+        if custom_color is not None:
+            r, g, b = custom_color
+            for i in range(9):
+                p1[i*3] = r
+                p1[i*3+1] = g
+                p1[i*3+2] = b
+        
         self.out(p1)
         self.ctrl("272a85ffe85d7636")
+
 
         # Packet 2: RGB color slot 2
         # ctrl pkt #9 = DPI count selector (how many DPI slots are active)
@@ -335,6 +375,7 @@ class LUOMMouse:
         self.ctrl("272bb5fff0057676")
 
         # Persist state so --get works without USB access
+        cc_hex = "%02X%02X%02X" % tuple(custom_color) if custom_color else None
         save_state(
             active_dpi,
             effective_cpi,
@@ -345,6 +386,7 @@ class LUOMMouse:
             lift_off,
             light_mode,
             standard_color,
+            cc_hex,
         )
 
 
@@ -424,13 +466,23 @@ if __name__ == "__main__":
     parser.add_argument(
         "--standard-color",
         metavar="COLOR",
-        choices=["multicolor", "white"],
+        choices=["multicolor", "rainbow", "white", "red", "green", "blue"],
         default=None,
         help=(
-            "Color variant for --light-mode standard. "
-            "multicolor = rainbow palette (default firmware behavior), "
-            "white = single white LED. "
-            "[EXPERIMENTAL: from pcap luom g10-light-2.pcapng, only these 2 variants verified]"
+            "Color for --light-mode standard. "
+            "multicolor/rainbow = full rainbow cycle (default). "
+            "Single colors (ctrl#5 verified from pcap): white, red, green, blue. "
+            "Others (cyan/magenta/yellow/gray) need more pcap captures."
+        ),
+    )
+    parser.add_argument(
+        "--color",
+        metavar="RRGGBB",
+        default=None,
+        help=(
+            "Arbitrary single LED color for standard mode (hex RGB, e.g. FF6600). "
+            "HACK: The device doesn't support custom RGB natively, so this uses "
+            "multicolor mode and fills the entire cycle palette with your color."
         ),
     )
     parser.add_argument(
@@ -450,14 +502,55 @@ if __name__ == "__main__":
         parser.print_help()
         sys.exit(1)
 
-    # Restore standard_color from saved state if not specified on CLI.
-    # Prevents subsequent calls (e.g. --active-dpi only) from resetting
-    # the lighting variant back to the firmware default.
     effective_standard_color = args.standard_color
+    effective_custom_color = None
+
+    if args.color is not None:
+        raw = args.color.lstrip("#")
+        if len(raw) != 6:
+            print(f"Error: --color must be hex RRGGBB (6 chars), got '{args.color}'")
+            sys.exit(1)
+        try:
+            effective_custom_color = (
+                int(raw[0:2], 16),
+                int(raw[2:4], 16),
+                int(raw[4:6], 16),
+            )
+        except ValueError:
+            print(f"Error: --color invalid hex '{args.color}'")
+            sys.exit(1)
+    else:
+        # If color not provided, we will fall back to saved custom_color below
+        pass
+
+    # Load saved state to preserve configuration that wasn't specified on CLI
+    saved = load_state() or {}
+    
     if effective_standard_color is None:
-        saved = load_state()
-        if saved is not None:
-            effective_standard_color = saved.get("standard_color")
+        effective_standard_color = saved.get("standard_color")
+    
+    if args.color is None:
+        cc_saved = saved.get("custom_color")
+        if cc_saved:
+            try:
+                effective_custom_color = (
+                    int(cc_saved[0:2], 16),
+                    int(cc_saved[2:4], 16),
+                    int(cc_saved[4:6], 16),
+                )
+            except (ValueError, IndexError):
+                pass
+
+    effective_dpi = args.dpi if args.dpi is not None else saved.get("cpi")
+    effective_active_dpi = args.active_dpi if args.active_dpi is not None else saved.get("active_slot")
+    effective_dpi_count = args.dpi_count if args.dpi_count is not None else saved.get("dpi_count")
+    effective_polling_rate = args.polling_rate if args.polling_rate is not None else saved.get("polling_rate")
+    effective_lift_off = args.lift_off if args.lift_off is not None else saved.get("lift_off")
+    effective_light_mode = args.light_mode if args.light_mode is not None else saved.get("light_mode")
+    
+    swap_buttons = args.swap_lr
+    if not swap_buttons and "--swap-lr" not in sys.argv:
+        swap_buttons = saved.get("swap_lr", False)
 
     mouse = LUOMMouse()
     try:
@@ -465,19 +558,20 @@ if __name__ == "__main__":
         kr_idx = (
             [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 100].index(kr)
             if kr is not None
-            else None
+            else saved.get("key_response")
         )
         mouse.apply_config(
-            swap_buttons=args.swap_lr,
-            dpi_list=args.dpi,
+            swap_buttons=swap_buttons,
+            dpi_list=effective_dpi,
             force_dpi=args.force_dpi,
-            active_dpi=args.active_dpi,
-            dpi_count=args.dpi_count,
+            active_dpi=effective_active_dpi,
+            dpi_count=effective_dpi_count,
             key_response=kr_idx,
-            polling_rate=args.polling_rate,
-            lift_off=args.lift_off,
-            light_mode=args.light_mode,
+            polling_rate=effective_polling_rate,
+            lift_off=effective_lift_off,
+            light_mode=effective_light_mode,
             standard_color=effective_standard_color,
+            custom_color=effective_custom_color,
         )
         print("Configuration applied successfully.")
     finally:
