@@ -16,7 +16,7 @@ DEFAULT_CPI = [300, 500, 900, 1400, 2400, 4800]
 def save_state(
     active_dpi,
     cpi_list,
-    swap_buttons,
+    button_map,
     dpi_count=None,
     key_response=None,
     polling_rate=None,
@@ -31,7 +31,7 @@ def save_state(
             {
                 "active_slot": active_dpi,  # 0-indexed (None = slot 1)
                 "cpi": cpi_list,
-                "swap_lr": swap_buttons,
+                "button_map": button_map,
                 "dpi_count": dpi_count,  # 1-7 (None = 7)
                 "key_response": key_response,  # 0-11 (None = 11 = 100ms)
                 "polling_rate": polling_rate,  # 125/250/500/1000 (None = 1000)
@@ -52,6 +52,18 @@ def load_state():
         return json.load(f)
 
 
+BUTTON_ACTIONS = {
+    "left": "0100f000",
+    "right": "0100f100",
+    "middle": "0100f200",
+    "forward": "0100f400",
+    "backward": "0100f300",
+    "dpi": "07000100",
+    "disabled": "00000000",
+}
+DEFAULT_BUTTON_MAP = ["left", "right", "middle", "forward", "backward", "dpi"]
+
+
 def print_state():
     state = load_state()
     if state is None:
@@ -59,17 +71,26 @@ def print_state():
         return
     slot = state.get("active_slot")
     cpi = state.get("cpi", DEFAULT_CPI)
-    swap = state.get("swap_lr", False)
     active_idx = slot if slot is not None else 0
     n_slots = state.get("dpi_count") or 7
-    kr = state.get("key_response")
-    kr_display = kr if kr is not None else 11
+    kr_display = state.get("key_response") or 11
     MS_MAP = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 100]
     poll = state.get("polling_rate") or 1000
     lod = state.get("lift_off") or 2
     lm = state.get("light_mode") or "standard"
     sc = state.get("standard_color")
     cc = state.get("custom_color")
+    bmap = state.get("button_map")
+
+    # Backward compatibility with old swap_lr state
+    if not bmap:
+        swap = state.get("swap_lr", False)
+        bmap = (
+            ["right", "left", "middle", "forward", "backward", "dpi"]
+            if swap
+            else DEFAULT_BUTTON_MAP
+        )
+
     print(f"Active DPI slot : {active_idx + 1}  (index {active_idx})")
     print(f"Enabled slots   : {n_slots} of 7")
     print(f"CPI per slot    : {cpi}")
@@ -85,7 +106,7 @@ def print_state():
     elif sc:
         light_str += f"  (color: {sc})"
     print(f"Light mode      : {light_str}")
-    print(f"Swap L/R        : {swap}")
+    print(f"Button map      : {bmap}")
 
 
 VID = 0x04D9
@@ -134,7 +155,7 @@ class LUOMMouse:
 
     def apply_config(
         self,
-        swap_buttons=False,
+        button_map=None,
         dpi_list=None,
         force_dpi=None,
         active_dpi=None,
@@ -171,7 +192,12 @@ class LUOMMouse:
         else:
             self.ctrl("252d75fff8ea26ee")  # LOD1,2 or default
         self.ctrl("272bd5ffe8ed7676")
-        self.ctrl(polling_packets.get(polling_rate, polling_packets[1000]))
+        self.ctrl(
+            polling_packets.get(
+                polling_rate if polling_rate is not None else 1000,
+                polling_packets[1000],
+            )
+        )
 
         # The 5th ctrl packet selects the active DPI slot.
         # ctrl pkt #9 selects max number of enabled DPI slots (1-7, default=7).
@@ -231,7 +257,7 @@ class LUOMMouse:
         # ctrl#5 encodes the actual color (see SINGLE_COLOR table below).
         STANDARD_COLOR_CTRL6 = {
             "multicolor": "272b75ffe8356d6e",  # b2=0x75 b6=0x6D (rainbow palette)
-            "rainbow":    "272b75ffe8356d6e",  # alias
+            "rainbow": "272b75ffe8356d6e",  # alias
         }
 
         ctrl5_pkt, ctrl6_pkt = LIGHT_MODES.get(
@@ -246,10 +272,10 @@ class LUOMMouse:
         # Single-color ctrl#5 lookup (from pcap captures):
         SINGLE_COLOR = {
             # color: ctrl#5 packet
-            "white":   "272b85049842556e",  # standard ctrl#5 (verified: white/default)
-            "red":     "272d4d04a03c6f8e",  # pcap session 1 (~red)
-            "green":   "272bc5ff703d8596",  # pcap session 2 (~green)
-            "blue":    "27293dffe843b67e",  # pcap session 3 (~blue)
+            "white": "272b85049842556e",  # standard ctrl#5 (verified: white/default)
+            "red": "272d4d04a03c6f8e",  # pcap session 1 (~red)
+            "green": "272bc5ff703d8596",  # pcap session 2 (~green)
+            "blue": "27293dffe843b67e",  # pcap session 3 (~blue)
             # cyan / magenta / yellow / gray: need pcap captures
         }
         SINGLE_COLOR_CTRL6 = "272b65ffe8357d6e"  # b2=0x65, fixed for all single colors
@@ -260,7 +286,9 @@ class LUOMMouse:
                 # and fill the entire rainbow palette with the same color.
                 ctrl5_pkt = LIGHT_MODES["standard"][0]
                 ctrl6_pkt = STANDARD_COLOR_CTRL6["multicolor"]
-                print(f"  custom-color: RGB {custom_color} → using multicolor palette hack")
+                print(
+                    f"  custom-color: RGB {custom_color} → using multicolor palette hack"
+                )
             elif standard_color is not None:
                 sc_norm = standard_color.lower()
                 if sc_norm in ("multicolor", "rainbow"):
@@ -268,7 +296,9 @@ class LUOMMouse:
                 elif sc_norm in SINGLE_COLOR:
                     ctrl5_pkt = SINGLE_COLOR[sc_norm]
                     ctrl6_pkt = SINGLE_COLOR_CTRL6
-                    print(f"  standard-color: {sc_norm} → ctrl#5={ctrl5_pkt}  ctrl#6={ctrl6_pkt}")
+                    print(
+                        f"  standard-color: {sc_norm} → ctrl#5={ctrl5_pkt}  ctrl#6={ctrl6_pkt}"
+                    )
                 else:
                     print(
                         f"  Warning: unknown standard-color '{standard_color}', using default"
@@ -287,18 +317,19 @@ class LUOMMouse:
         if custom_color is not None:
             r, g, b = custom_color
             for i in range(9):
-                p1[i*3] = r
-                p1[i*3+1] = g
-                p1[i*3+2] = b
-        
+                p1[i * 3] = r
+                p1[i * 3 + 1] = g
+                p1[i * 3 + 2] = b
+
         self.out(p1)
         self.ctrl("272a85ffe85d7636")
-
 
         # Packet 2: RGB color slot 2
         # ctrl pkt #9 = DPI count selector (how many DPI slots are active)
         self.out("00ff000000ffff0000ffff0000ffffff00ffffffffffffff0000000000000000")
-        count_ctrl = dpi_count_packets.get(dpi_count, dpi_count_packets[7])  # ty:ignore[no-matching-overload]
+        count_ctrl = dpi_count_packets.get(
+            dpi_count if dpi_count is not None else 7, dpi_count_packets[7]
+        )
         self.ctrl(count_ctrl)
 
         # Packet 3: DPI registers
@@ -325,10 +356,18 @@ class LUOMMouse:
         self.ctrl("272d55ffe86d7876")
 
         # Packet 4: button mapping
-        if swap_buttons:
-            self.out("0100f1000100f0000100f2000100f4000100f300070001000700010007000200")
-        else:
-            self.out("0100f0000100f1000100f2000100f4000100f300070001000700010007000200")
+        # 32 bytes = 8 button slots (4 bytes each)
+        if button_map is None:
+            button_map = DEFAULT_BUTTON_MAP
+
+        btn_hex = ""
+        for i in range(6):
+            action = button_map[i] if i < len(button_map) else DEFAULT_BUTTON_MAP[i]
+            btn_hex += BUTTON_ACTIONS.get(action, BUTTON_ACTIONS["disabled"])
+
+        # Slots 7 and 8 are fixed unused buttons on this model
+        btn_hex += "0700010007000200"
+        self.out(btn_hex)
 
         # Packet 5: timing/debounce (0x0B ms debounce, 0x0D ms motion)
         self.out("0b0000000d000000000000000000000000000000000000000400010004000200")
@@ -379,7 +418,7 @@ class LUOMMouse:
         save_state(
             active_dpi,
             effective_cpi,
-            swap_buttons,
+            button_map,
             dpi_count,
             key_response,
             polling_rate,
@@ -399,8 +438,13 @@ if __name__ == "__main__":
     )
     parser.add_argument("--default", action="store_true", help="Apply default config")
     parser.add_argument(
-        "--swap-lr", action="store_true", help="Swap Left and Right buttons"
+        "--remap",
+        nargs="+",
+        metavar="ACTION",
+        help=f"Remap physical buttons 1 to 6 in order. Allowed actions: {', '.join(BUTTON_ACTIONS.keys())}",
     )
+    # Deprecated, kept for backward compatibility (hidden from help)
+    parser.add_argument("--swap-lr", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument(
         "--dpi",
         type=int,
@@ -525,10 +569,10 @@ if __name__ == "__main__":
 
     # Load saved state to preserve configuration that wasn't specified on CLI
     saved = load_state() or {}
-    
+
     if effective_standard_color is None:
         effective_standard_color = saved.get("standard_color")
-    
+
     if args.color is None:
         cc_saved = saved.get("custom_color")
         if cc_saved:
@@ -542,15 +586,53 @@ if __name__ == "__main__":
                 pass
 
     effective_dpi = args.dpi if args.dpi is not None else saved.get("cpi")
-    effective_active_dpi = args.active_dpi if args.active_dpi is not None else saved.get("active_slot")
-    effective_dpi_count = args.dpi_count if args.dpi_count is not None else saved.get("dpi_count")
-    effective_polling_rate = args.polling_rate if args.polling_rate is not None else saved.get("polling_rate")
-    effective_lift_off = args.lift_off if args.lift_off is not None else saved.get("lift_off")
-    effective_light_mode = args.light_mode if args.light_mode is not None else saved.get("light_mode")
-    
-    swap_buttons = args.swap_lr
-    if not swap_buttons and "--swap-lr" not in sys.argv:
-        swap_buttons = saved.get("swap_lr", False)
+    effective_active_dpi = (
+        args.active_dpi if args.active_dpi is not None else saved.get("active_slot")
+    )
+    effective_dpi_count = (
+        args.dpi_count if args.dpi_count is not None else saved.get("dpi_count")
+    )
+    effective_polling_rate = (
+        args.polling_rate
+        if args.polling_rate is not None
+        else saved.get("polling_rate")
+    )
+    effective_lift_off = (
+        args.lift_off if args.lift_off is not None else saved.get("lift_off")
+    )
+    effective_light_mode = (
+        args.light_mode if args.light_mode is not None else saved.get("light_mode")
+    )
+
+    # Handle button_map logic
+    effective_bmap = args.remap
+    if effective_bmap is None:
+        if args.swap_lr:
+            effective_bmap = ["right", "left", "middle", "forward", "backward", "dpi"]
+        else:
+            effective_bmap = saved.get("button_map")
+            if not effective_bmap:
+                # migrate from old swap_lr state
+                if saved.get("swap_lr"):
+                    effective_bmap = [
+                        "right",
+                        "left",
+                        "middle",
+                        "forward",
+                        "backward",
+                        "dpi",
+                    ]
+                else:
+                    effective_bmap = DEFAULT_BUTTON_MAP
+
+    # Validate custom button mapping
+    if effective_bmap is not None:
+        for action in effective_bmap:
+            if action not in BUTTON_ACTIONS:
+                print(
+                    f"Error: Unknown button action '{action}'. Allowed: {', '.join(BUTTON_ACTIONS.keys())}"
+                )
+                sys.exit(1)
 
     mouse = LUOMMouse()
     try:
@@ -561,7 +643,7 @@ if __name__ == "__main__":
             else saved.get("key_response")
         )
         mouse.apply_config(
-            swap_buttons=swap_buttons,
+            button_map=effective_bmap,
             dpi_list=effective_dpi,
             force_dpi=args.force_dpi,
             active_dpi=effective_active_dpi,

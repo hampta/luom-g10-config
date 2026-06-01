@@ -16,13 +16,13 @@ Protocol fully decoded from USBPcap captures. No Windows driver or proprietary s
 - [x] Light modes (12 effects)
 - [x] Standard color variant (`multicolor`, `white`, `red`, `green`, `blue`)
 - [x] RGB solid color customization (`--color RRGGBB`) via multicolor palette hack
-- [x] Button swap (L↔R)
+- [x] Button remapping (`--remap`) for standard keys + DPI
 - [x] Config persistence (`~/.config/luom_g10.json`)
 - [x] Factory defaults (`--default`)
 - [ ] `mode13`, `mode14` — captured from pcap, effect unidentified
-- [ ] Custom button remapping
+- [ ] Multimedia / Macro button mapping (requires Windows pcap captures)
 - [ ] Windows / macOS support
-- [ ] Firmware read-back
+- [x] Firmware read-back (verified: hardware does not support reading)
 
 ---
 
@@ -131,7 +131,7 @@ Key response    : 4 ms  (level 3, 0=1ms fastest, 11=100ms default)
 Polling rate    : 1000 Hz
 Lift-off dist   : LOD 2  (1=low, 3=high)
 Light mode      : breathing
-Swap L/R        : False
+Button map      : ['left', 'right', 'middle', 'forward', 'backward', 'dpi']
 ```
 
 ### Apply factory defaults
@@ -174,10 +174,21 @@ sudo python3 luom_config.py --color 401A00
 sudo python3 luom_config.py --standard-color red
 ```
 
-### Swap left/right mouse buttons
+### Button Remapping
+
+You can remap the 6 physical buttons (Left, Right, Middle, Forward, Backward, DPI) to any of the supported actions. Provide the actions in physical button order (1 through 6).
+
+**Supported actions:** `left`, `right`, `middle`, `forward`, `backward`, `dpi`, `disabled`.
 
 ```bash
-sudo python3 luom_config.py --swap-lr
+# Example: Swap Left and Right clicks (Southpaw mode)
+sudo python3 luom_config.py --remap right left middle forward backward dpi
+
+# Example: Make the DPI button act as a "Forward" button
+sudo python3 luom_config.py --remap left right middle forward backward forward
+
+# Example: Disable the side buttons (Forward/Backward)
+sudo python3 luom_config.py --remap left right middle disabled disabled dpi
 ```
 
 ---
@@ -198,7 +209,7 @@ sudo python3 luom_config.py --swap-lr
 | `--light-mode` | str | see below | `standard` | LED lighting effect |
 | `--standard-color` | str | `multicolor`, `white`, `red`, `green`, `blue` | `multicolor` | Use a built-in firmware color preset for standard mode |
 | `--color` | hex | `RRGGBB` (e.g., `FF0000`) | — | Set a custom static RGB color (and adjust brightness) using the multicolor hack |
-| `--swap-lr` | flag | — | off | Swap left and right buttons |
+| `--remap` | list | see below | (default map) | Remap physical buttons 1-6 in order. Allowed: `left`, `right`, `middle`, `forward`, `backward`, `dpi`, `disabled` |
 
 ### Light modes
 
@@ -232,7 +243,7 @@ Example saved state:
 {
   "active_slot": 0,
   "cpi": [400, 800, 1600, 3200, 6400, 12800],
-  "swap_lr": false,
+  "button_map": ["left", "right", "middle", "forward", "backward", "dpi"],
   "dpi_count": 4,
   "key_response": 3,
   "polling_rate": 1000,
