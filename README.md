@@ -5,39 +5,28 @@ Protocol fully decoded from USBPcap captures. No Windows driver or proprietary s
 
 ---
 
-## Current Status
+## Status
 
-### ✅ Implemented
-
-| Feature | Details |
-|---------|---------|
-| DPI slots | 6 slots, each independently configurable (multiples of 50, up to 12800 CPI) |
-| Active DPI slot | Select which slot is active on startup (0–6) |
-| DPI slot count | How many slots the DPI button cycles through (1–7) |
-| Polling rate | 125 / 250 / 500 / 1000 Hz |
-| Lift-off distance | 3 levels: low / medium / high |
-| Key debounce | 12 levels: 1–10 ms (1 ms steps), 20 ms, 100 ms |
-| Lighting effects | 12 modes: `standard`, `off`, `breathing`, `neon`, `wave`, `key-reaction`, `trailing`, `drag`, `slide`, `yo-yo`, `marbles`, `flying-star` |
-| Button swap | Swap left ↔ right buttons |
-| State persistence | Config saved to `~/.config/luom_g10.json`; readable without USB via `--get` |
-| Factory defaults | `--default` restores factory config |
-
-### ⚠️ Partially Implemented / Unknown
-
-| Feature | Status |
-|---------|--------|
-| `mode13`, `mode14` | Captured from pcap, effect unidentified — **commented out** |
-| RGB color customization | Color packets are hardcoded (rainbow palette); per-user color not exposed yet |
-
-### ❌ Not Implemented
-
-| Feature | Notes |
-|---------|-------|
-| Macro / button remapping | Button map packet is static; custom remap not exposed |
-| Windows / macOS | USB access layer is Linux-only (`detach_kernel_driver`) |
-| Firmware version read | Device is write-only; no read-back protocol found |
+- [x] DPI — 6 slots (×50, ≤12800 CPI)
+- [x] Active DPI slot (0–6)
+- [x] DPI slot count (1–7)
+- [x] Polling rate (125 / 250 / 500 / 1000 Hz)
+- [x] Lift-off distance (3 levels)
+- [x] Key debounce (1–10 / 20 / 100 ms)
+- [x] Light modes (12 effects)
+- [x] Standard color variant (`multicolor` / `white`) — *experimental, 2 variants from pcap*
+- [x] Button swap (L↔R)
+- [x] Config persistence (`~/.config/luom_g10.json`)
+- [x] Factory defaults (`--default`)
+- [ ] `mode13`, `mode14` — captured from pcap, effect unidentified
+- [ ] RGB color per-slot customization — palette hardcoded
+- [ ] Custom button remapping
+- [ ] Windows / macOS support
+- [ ] Firmware read-back
 
 ---
+
+
 
 ## Supported Devices
 
